@@ -22,7 +22,7 @@ memory layer, exhibition mode, and (later) a rebranded app. Keep Elato's LICENSE
   definitions in this file as its data contract and uses local mock data until task 5's tables exist.
   Sat 10/17 soldering + wiring + first real audio; Sun 10/18 assembly + burn-in; Mon 10/19 buffer;
   Tue 10/20 pack; Wed 10/21 install.
-- Goal: by Saturday every piece of software is done and tested without audio hardware, so on Sunday the only
+- Goal: by Saturday morning all software is done and tested without audio hardware, so on Saturday the only
   work is connecting mic, amp and reed sensor to the pins below.
 - Prefer the smallest change that works. Do not refactor Elato code that we don't need to touch.
 
@@ -77,7 +77,7 @@ clear test data from the demo profile before the show.
 
 - **Firmware** (ESP32, `firmware-arduino/`): lid sensing, I2S mic in / speaker out, Opus, WSS to edge server.
 - **Edge server** (Deno, `server/`, deployed to Deno Deploy): holds API keys, builds the context brief,
-  runs the check-in timer, executes tools, saves transcripts.
+  runs the check-in timer, executes tools, writes session summaries (no raw transcripts).
 - **Voice model**: OpenAI Realtime API (speech-to-speech) via Elato's OpenAI model path. Keep this path.
 - **Database**: hosted Supabase (Postgres). Use the hosted project, not local Docker, unless the owner says otherwise.
 - **App**: Next.js (`frontend-nextjs/`), Vercel. Reads/writes Supabase. Rebrand is a stretch goal.
@@ -93,7 +93,7 @@ intentionally absent). Starting inventory is in `products.md` (`category | routi
 Gallery WiFi is password-only.
 
 ### 0. Recon
-- [ ] Map the repo: where the button handler, config (`config.h`, `Config.cpp`), audio pins, the Deno OpenAI
+- [x] Map the repo: where the button handler, config (`config.h`, `Config.cpp`), audio pins, the Deno OpenAI
       session handler, Supabase schema/migrations and env vars live. Write the map into "Repo map" below.
 
 ### 1. Run Elato as-is
@@ -104,10 +104,18 @@ Gallery WiFi is password-only.
 
 ### 1b. Fake device (so server work can be tested before soldering)
 - [ ] A small local script (`tools/fake-device/`) that connects to the Deno server exactly like the ESP32
-      does (same auth, same WebSocket protocol, Opus audio), streams the laptop mic, and plays replies
+      does (same auth, same WebSocket protocol — raw PCM16 16 kHz up, Opus down; see "Device↔server
+      protocol" in the Repo map), streams the laptop mic, and plays replies
       through the laptop speakers. Simulate "pouch open" by starting it and "pouch closed" by Ctrl-C.
       Read the firmware source to match the protocol precisely. Note: the browser chat in Elato's app may
       bypass the Deno server, so it does NOT exercise check-ins or tools — the fake device does.
+- [ ] Fix the input sample rate in `server/deno/models/openai.ts`: the device sends 16 kHz PCM but the
+      session declares 24 kHz (`realtime/client.js` `_toGASessionPayload`) and openai.ts forwards it
+      unresampled. Reuse `resamplePcm16Mono` from `models/grok.ts` / `models/openai-live.ts` (16000 → 24000)
+      before `input_audio_buffer.append`. Verify with the DEV_MODE debug files
+      (`debug_audio_<ts>.pcm` in `server/deno/`, raw s16le mono): wrap one in a WAV header at 16000 Hz
+      and at 24000 Hz and listen — the 16 kHz one should sound natural, proving the input rate. After the
+      fix, confirm the logged user transcriptions match what was said.
 - [ ] Gate: a spoken conversation through the fake device, server logs show the session.
 
 ### 2. Firmware bring-up
@@ -121,6 +129,10 @@ Gallery WiFi is password-only.
 - [ ] Test mode for before the reed sensor is wired: a compile flag `LID_TEST_BOOT_BUTTON` makes the
       onboard BOOT button (GPIO 0, safe to read after boot) act as the lid (pressed = open). Log every lid
       state change to serial. Default build uses GPIO 2.
+- [ ] Before deep sleep, keep the lid pin's internal pull-up on in the RTC domain:
+      `rtc_gpio_pullup_en(GPIO_NUM_2)` + `rtc_gpio_pulldown_dis(GPIO_NUM_2)` (same for GPIO 0 in
+      `LID_TEST_BOOT_BUTTON` mode). Otherwise the pin floats while the pouch is closed (reed open circuit)
+      and causes spurious wakes. Test: the board stays asleep 10+ minutes with the lid closed.
 - [ ] Short local tone on open (before server connects); distinct error tone if WiFi/server fails.
 - [ ] Sleep model: see "Implication for task 3" in the Repo map — confirm with owner before changing it.
       Whichever model, the device must recover on its own if WiFi drops overnight.
@@ -142,7 +154,7 @@ Gallery WiFi is password-only.
 ### 5b. Product lookup — CRUCIAL, core scope (not stretch)
 When the user names a product that isn't in their kit, the kit identifies it, confirms it aloud, and saves it.
 - [ ] Table `product_catalog` (shared cache across profiles): normalized_query, brand, name, category,
-      routine_step_guess, key_ingredients text[], size, image_url, source ('obf' | 'web' | 'manual'),
+      routine_step_guess, key_ingredients text[], size, image_url, source,
       source_url, confidence, fetched_at. Every successful lookup is cached here first.
       `source` values: 'beautyapi' | 'obf' | 'web' | 'manual'. Store the Beauty API product id when available.
 - [ ] Tool `lookup_product(query)`, called by the model when `match_product` has no confident match.
@@ -160,11 +172,11 @@ When the user names a product that isn't in their kit, the kit identifies it, co
          only in the final verification run. On 429, back off; don't retry inside the 3 s budget.
       4. **Open Beauty Facts** search API (free, no key; send a descriptive User-Agent as their API rules
          require). Coverage is uneven — a free second opinion.
-      5. **Web search fallback** — optional: if `SEARCH_API_KEY` is not set, skip this step and fall through
-         to saving the product as unverified. Build the code path either way. via a search API (`SEARCH_API_KEY`; provider chosen by owner — Brave Search API
-         or Tavily), top few results → a small fast text model (via the existing `OPENAI_API_KEY`; check
-         current model names) extracts a structured record with a confidence score. Never invent fields the
-         sources don't support; leave them null.
+      5. **Web search fallback** (optional): query a search API (`SEARCH_API_KEY`; provider chosen by owner —
+         Brave Search API or Tavily), pass the top few results to a small fast text model (via the existing
+         `OPENAI_API_KEY`; check current model names), which extracts a structured record with a confidence
+         score. Never invent fields the sources don't support; leave them null. Build this code path either
+         way; if `SEARCH_API_KEY` is not set, skip this step and fall through to saving the product as unverified.
 - [ ] Return the top 1–3 candidates to the voice model as short strings ("COSRX Advanced Snail 96 Mucin Power
       Essence, essence step"). The model reads back the best one and asks for a yes/no; on yes →
       insert into `products` for the active profile (status 'in use') + `log_usage`; on no → offer the next
@@ -198,6 +210,12 @@ When the user names a product that isn't in their kit, the kit identifies it, co
       - **Stop feeding raw chat history into the prompt.** Upstream `createSystemPrompt` injects previous
         conversations; at the gallery that would leak one visitor's words into the next visitor's session.
         Replace it with the context brief built only from structured data + recent `session_summaries`.
+        Device path: `addConversation` calls in `models/openai.ts` (assistant + user transcripts) and
+        `getChatHistory` → `createSystemPrompt` in `main.ts` / `supabase.ts`.
+      - **Browser chat path too**, even though the gallery won't use it: stop
+        `frontend-nextjs/app/components/Realtime/components/Transcript.tsx` (`dbInsertTranscriptItem`)
+        from writing to `conversations`, and stop `frontend-nextjs/app/api/session/route.ts` from injecting
+        `conversations` history into the prompt.
       - Notes page day summaries use `session_summaries`.
       - One-off cleanup script to delete all demo-profile data after the show.
 
@@ -213,13 +231,15 @@ When the user names a product that isn't in their kit, the kit identifies it, co
 - [ ] Confirm the Deno server runs on Deno Deploy as-is (it uses an npm `ws` WebSocketServer and writes debug
       PCM files when `DEV_MODE` is on — make sure that's off in production, the filesystem there is read-only).
 
-### 7. Companion display app (iPhone kiosk) — Mon/Tue, after 1–6 pass burn-in
+### 7. Companion display app (iPhone kiosk)
 See "Display app design spec" below and `design/app-sketch.jpg`. Build in this priority order and stop
 wherever time runs out; each step must ship working on its own.
 - [ ] 7a. Theme tokens file + fonts + mirror-icon nav shell + live Supabase subscription.
 - [ ] 7b. Home ("Your Kit"): kit outline with product PNGs populating live (text label fallback).
 - [ ] 7c. Products ("cupboard"): grid of slots → product detail (PNG, name, product notes).
-- [ ] 7d. Notes: post-it per day (summary built from usage_events + observations for that date) → day detail.
+- [ ] 7d. Notes: post-it per day (summary built from session_summaries + usage_events for that date) → day detail.
+      If a day has usage events but no session summary, the post-it shows the products used that day in
+      routine order (e.g. "cleanser, serum, SPF").
 - [ ] 7e. Recs: placeholder page ("coming soon") only.
 
 ### 8. Stretch (after the show)
@@ -309,27 +329,69 @@ glows while a session is live.
 
 ## Repo map
 
-Pre-filled from upstream ElatoAI `main` on 2026-10-16. Task 0: verify against the fork, correct anything that
-differs, and add whatever is missing (especially the device↔server audio protocol details).
+Verified against the fork (`tiat` branch, upstream through `18d35fc` "adding gpt-live-1") on 2026-10-16.
+Paths are relative to the repo root `ElatoAI/`.
 
-**Firmware** (`firmware-arduino/`, PlatformIO, Arduino framework, env `esp32-s3-devkitc-1`)
-- `src/Config.h`: mode selectors — `DEV_MODE` / `PROD_MODE` / `ELATO_MODE`; voice backend
-  `VOICE_SERVER_DENO` (keep) / `VOICE_SERVER_CLOUDFLARE`; input mode `#define TOUCH_MODE` (comment out).
-- `src/Config.cpp`: `ws_server` + `backend_server`/`backend_port` per mode; pin definitions.
-  **Upstream pins already match our wiring table** (mic SD 14 / WS 4 / SCK 1 on I2S_NUM_1; amp WS 5 / BCK 6 /
-  DATA 7 / SD 10 on I2S_NUM_0; `BUTTON_PIN = GPIO_NUM_2`). LED pins 13/9/8 are unused in our build.
-  Mic 16 kHz, speaker 48 kHz.
-- `src/main.cpp`: `setup()` — non-touch mode enables `esp_sleep_enable_ext0_wakeup(BUTTON_PIN, LOW)` and an
-  `ESP32_Button` with long-press-up and double-click callbacks (single click detached); `loop()` calls
-  `processSleepRequest()`; sleep path ends in `esp_deep_sleep_start()`. Tasks: LED, speaker, mic (core 1),
-  websocket network task (core 0).
-- `src/Audio.cpp`: websocket client + audio. Connects with headers `Authorization: Bearer <authToken>` and
-  `X-Device-Mac: <WiFi MAC>`. Handles JSON control messages `{type:"server", msg:...}` incl.
-  `RESPONSE.COMPLETE` and `SESSION.END` (→ goes to sleep). Sends `{type:"instruction", ...}` acks.
-- `src/WifiManager.*` (captive portal "ELATO-DEVICE" at 192.168.4.1), `src/OTA.*`, `src/FactoryReset.h`,
+**Firmware** (`firmware-arduino/`, PlatformIO, Arduino framework, env `esp32-s3-devkitc-1`, espressif32 6.10.0)
+- `src/Config.h`: mode selectors — `DEV_MODE` (currently on) / `PROD_MODE` / `ELATO_MODE`; voice backend
+  `VOICE_SERVER_DENO` (keep) / `VOICE_SERVER_CLOUDFLARE`; input mode `#define TOUCH_MODE` (currently on —
+  comment out in task 2). `platformio.ini` also sets `-D TOUCH_SENSOR_ENABLE=1` (harmless).
+- `src/Config.cpp`: `ws_server` / `ws_port` / `ws_path` + `backend_server` / `backend_port` per mode.
+  DEV_MODE: both hosts are `172.20.10.4` (an iPhone-hotspot IP — **set the laptop IP in task 2**),
+  `ws_port` 8000, path `/`, backend port 3000, plain `ws://` + `http://`. PROD_MODE: `wss://` on 443
+  via `beginSslWithCA(..., CA_cert)` and `https://` to `backend_server` with `Vercel_CA_cert`
+  (both cert strings are placeholders). **Pins already match our wiring table** (mic SD 14 / WS 4 / SCK 1
+  on I2S_NUM_1; amp WS 5 / BCK 6 / DATA 7 / SD 10 on I2S_NUM_0; `BUTTON_PIN = GPIO_NUM_2`). LED pins
+  13/9/8 are unused in our build. `MIC_SAMPLE_RATE` 16000, speaker `SAMPLE_RATE` 48000.
+- `src/main.cpp`: `setup()` — non-touch mode calls `esp_sleep_enable_ext0_wakeup(BUTTON_PIN, LOW)` and creates
+  an `ESP32_Button` with long-press-up and double-click callbacks (both set `sleepRequested`; single click
+  detached). `loop()` calls `processSleepRequest()` → `enterSleep()` (amp SD LOW, stop I2S, close WS,
+  `esp_deep_sleep_start()`). A comment mentions an "inactivity timeout" in `loop()` — **none exists**; the
+  firmware has no session cap. Tasks: LED, speaker, mic (core 1), websocket network task (core 0).
+- `src/Audio.cpp`: websocket client + audio pipeline (protocol below). Amp SD pin goes HIGH on
+  `RESPONSE.CREATED` and LOW when listening/sleeping.
+- `src/WifiManager.*`: captive portal SoftAP "ELATO-DEVICE" (192.168.4.1, `/wifi`). On WiFi connect
+  (`connectCb`) it fetches the auth token if NVS has none, then calls `websocketSetup(ws_server, ws_port, ws_path)`.
+- `src/OTA.*` (`/api/ota_update_handler`), `src/FactoryReset.h` (`/api/factory_reset_handler`),
   `src/LEDHandler.*`, `src/PitchShift.*`.
+- `platformio.ini`: PSRAM lines (`memory_type = qio_opi` etc.) are commented out; upstream runs without
+  PSRAM. Leave it unless task 2 hits memory problems.
 - `test/print_mac_address_test.cpp` — read the board's MAC for device registration. Other useful tests:
   `mic_test.cpp`, `speaker_radio_test.cpp`, `opus_audio_loop_test.cpp`, `audio_stream_test.cpp`.
+
+**Device↔server protocol** (what the fake device in task 1b must reproduce)
+1. Token: `GET http://<backend>:3000/api/generate_auth_token?macAddress=<MAC>` → `{token}`. HS256 JWT
+   signed with `JWT_SECRET_KEY`, claims `aud/role = authenticated`, `sub = user_id`, `email`, **no expiry**.
+   With `NEXT_PUBLIC_SKIP_DEVICE_REGISTRATION=True` the token is always for `admin@elatoai.com`; otherwise
+   for the user linked to that MAC in `devices`. Stored in NVS (`auth` / `auth_token`).
+2. WebSocket `ws://<ws_server>:8000/` with headers `Authorization: Bearer <token>`, `X-Wifi-Rssi: <rssi>`,
+   `X-Elato-Playback-Ack: 1`, `X-Device-Mac: <MAC>`. Server (`main.ts` upgrade handler) verifies the JWT
+   with `JWT_SECRET_KEY`, loads the user by email (with `personality`, `language`, `device`), and uses the
+   token as the Supabase auth for all queries — so **`JWT_SECRET_KEY` must be a secret the hosted project
+   accepts**. MAC check is skipped in DEV_MODE and whenever the header is absent. Failure → HTTP 401.
+3. Server → device, text JSON: first `{type:"auth", volume_control, is_ota, is_reset, pitch_factor}`
+   (`is_ota`/`is_reset` → device restarts into OTA / reset). Then `{type:"server", msg}`:
+   - `RESPONSE.CREATED` (+ optional `volume_control`) → device SPEAKING, amp on.
+   - `RESPONSE.COMPLETE` / `RESPONSE.ERROR` → device returns to LISTENING 1 s later (amp off, mic flushed).
+     Only sent when the response contained audio (tool-call-only responses send nothing).
+   - `AUDIO.COMMITTED` → device PROCESSING. `SESSION.END` → device deep-sleeps.
+   - If `playback_id` is present on CREATED/COMPLETE, the device instead drains playback and replies
+     `{type:"instruction", msg:"PLAYBACK.COMPLETE", playback_id}`. The OpenAI path never sends `playback_id`.
+4. Server → device, binary: Opus packets, 24 kHz mono, 120 ms frames, 24 kbps (`utils.ts`
+   `createOpusPacketizer`); device decodes and plays at 48 kHz. Only accepted while SPEAKING.
+5. Device → server, binary: **raw PCM16 LE, 16 kHz mono, not Opus**, sent in 64-byte chunks, **only while
+   LISTENING**. Server forwards it as `input_audio_buffer.append`. ⚠ The OpenAI session declares input as
+   24 kHz (`realtime/client.js` `_toGASessionPayload`) and `openai.ts` does not resample — fix in task 1b.
+   (`grok.ts` and `openai-live.ts` already resample 16→24 kHz.)
+6. Turn flow: after connect the device is PROCESSING and sends no audio until the greeting finishes
+   (first `RESPONSE.COMPLETE` + 1 s). Turn detection is OpenAI `server_vad`. Half-duplex: the firmware
+   never sends `end_of_speech` or `INTERRUPT` (the server handles both, unused).
+7. Messages that arrive before OpenAI connects are queued and replayed as text (`isBinary=false`), so early
+   audio would be dropped — harmless because the device sends none before the greeting.
+
+**Known limits (accepted, not tasks)**
+- Visitors can't interrupt the AI mid-reply: the mic is off while the device is speaking (half-duplex).
+- The 5-minute session cap is enforced server-side only; the firmware has no timeout of its own.
 
 **Implication for task 3 (lid trigger):** upstream already deep-sleeps and wakes when GPIO 2 goes LOW —
 which is exactly "pouch opened". Smallest change: keep that wake path; add "GPIO 2 HIGH held ≥300 ms →
@@ -337,38 +399,61 @@ which is exactly "pouch opened". Smallest change: keep that wake path; add "GPIO
 (trade-off: simpler and proven, but ~2–3 s WiFi reconnect on each open; mask it with the open tone).
 For `LID_TEST_BOOT_BUTTON`, GPIO 0 is also an RTC IO, so ext0 wake works on it too.
 
-**Edge server** (`server/deno/`, entry `main.ts`)
-- `main.ts`: WebSocket server; on connection loads chat history (`getChatHistory`), builds
-  `createFirstMessage` + `createSystemPrompt(chatHistory, payload)`, picks provider from
-  `user.personality.provider` and calls e.g. `connectToOpenAI(providerArgs)`. Auth from the
-  `authorization` header.
-- `supabase.ts`: `getSupabaseClient(userJwt)`, `createSystemPrompt` (line ~171) — **inject our context
-  brief here**. Chat history is already fed into the prompt (basic memory exists upstream).
+**Edge server** (`server/deno/`, entry `main.ts`; run `deno run -A --env-file=.env main.ts`)
+- `main.ts`: `node:http` server + npm `ws` `WebSocketServer` (noServer, no permessage-deflate). Upgrade
+  handler does auth (above). On connection: opens a debug PCM file if DEV_MODE, `getChatHistory`,
+  `createFirstMessage` + `createSystemPrompt(chatHistory, payload)`, sends the `auth` message, picks
+  provider from `user.personality.provider` (or `openai-live` via `OPENAI_LIVE_USER_IDS`) and calls e.g.
+  `connectToOpenAI(providerArgs)`. Listens on `HOST:PORT` (8000) in DEV_MODE, **port 8080 otherwise**.
+- `supabase.ts`: `getSupabaseClient(userJwt)`, `getUserByEmail`, `getDeviceInfo`, `getChatHistory` (line 60;
+  last 20 `conversations` rows for user + personality), `createSystemPrompt` (line 171) — **replace the chat
+  history with our context brief here**. `UserPromptTemplate` uses `users.supervisee_name/age/persona`.
+  `addConversation` (line 201) writes transcripts.
 - `models/openai.ts`: OpenAI Realtime via `realtime/client.js` (`RealtimeClient`). Tools are registered with
   `client.addTool(...)` under `// ADD TOOL CALLS HERE` — an `end_session` tool already exists and sends
-  `{type:"server", msg:"SESSION.END"}` to the device. **Add our tools here; reuse SESSION.END for the
-  check-in stop rules and the 5-min cap.** Session options: model `gpt-realtime-2.1`, `server_vad`
-  (threshold 0.4, silence 1000 ms), `instructions: systemPrompt`.
-- `utils.ts`: Opus encoder/packetizer, PCM helpers. `models/openai-live.ts` and other providers: ignore.
-- `.env.example`: `SUPABASE_URL`, `SUPABASE_KEY` (anon), `JWT_SECRET_KEY` (**must equal the hosted
-  project's JWT secret**), `ENCRYPTION_KEY`, `OPENAI_API_KEY`, `HOST`, `PORT=8000`, `DEV_MODE`. Other
-  provider keys can stay blank.
+  `{type:"server", msg:"SESSION.END"}`. **Add our tools here; reuse SESSION.END for the check-in stop rules
+  and the 5-min cap.** `client.js` runs tool handlers and then calls `createResponse()` automatically.
+  Transcripts saved via `addConversation` at lines ~103 (assistant) and ~182 (user). Session options: model
+  `gpt-realtime-2.1`, `server_vad` (threshold 0.4, prefix 400 ms, silence 1000 ms), voice
+  `personality.oai_voice` (default `ash`), `input_audio_transcription: gpt-realtime-whisper`,
+  `instructions: systemPrompt`. First message is sent as a system item + `response.create` on `session.created`.
+- `utils.ts`: `authenticateUser` (jose HS256 verify), Opus encoder/packetizer, `isDev`
+  (`DEV_MODE === "True"`), PCM helpers. Other providers in `models/`: ignore.
+- `.env.example`: `SUPABASE_URL`, `SUPABASE_KEY` (anon), `JWT_SECRET_KEY`, `ENCRYPTION_KEY`,
+  `OPENAI_API_KEY`, `HOST`, `PORT=8000`, `DEV_MODE=True`. Other provider keys and the `OPENAI_LIVE_*` /
+  `BOSON_*` / `GROK_*` overrides can stay blank. Ours add `BEAUTY_API_KEY` (and optional `SEARCH_API_KEY`).
 
-**Database** (`supabase/`)
-- `migrations/`: `20250417155518_remote_schema.sql` (tables: api_keys, conversations, devices, languages,
-  personalities, users) + 5 later migrations (first_message, provider, pitch_factor, boson voices,
-  openai_live). `seed.sql` seeds personalities/voices. Our new migration(s) for products / usage_events /
-  observations go here with a later timestamp.
+**Database** (`supabase/`; CLI linked to hosted project `smart_pouch`, ref `ormchbazdipjwkhlprhc`)
+- `migrations/`: `20250417155518_remote_schema.sql` (extensions incl. `vector`; tables api_keys,
+  conversations, devices, languages, personalities, users; `match_documents` fn) + 5 later migrations:
+  `20250603145138_add_pitch_factor`, `20250604180849_add_first_message`, `20250611011151_add_provider`,
+  `20260901072000_add_boson_voices` (provider check), `20260911090000_add_openai_live_provider`.
+  On 2026-10-16 none were applied to the hosted DB yet. Our new migrations go here with a later timestamp.
+- `seed.sql`: `auth.users` + `public.users` row for **`admin@elatoai.com` / password `admin`** (default
+  personality "Aria"), ~40 personalities, 4 languages.
+- `users.device_id` → `devices` (`mac_address`, `user_code`, `volume`, `is_ota`, `is_reset`).
+- **Upstream RLS is wide open:** anon can read `users`, `devices`, `personalities`; `conversations` has
+  `USING (true)` for all commands; anyone can update `devices`; anon can update `users`. The display app ships
+  the anon key, so task 5 must tighten these (at least `conversations`, `users`).
 
-**App** (`frontend-nextjs/`, Next.js + Tailwind + shadcn `components/ui/`)
-- Supabase clients in `utils/supabase/`; data helpers in `db/` (devices, personalities, users, conversations).
-- `app/api/generate_auth_token/route.ts` — mints the device auth token. `app/api/session/route.ts` +
-  `app/components/Realtime/` — the in-browser chat (WebRTC straight to OpenAI; **does not go through the
-  Deno server**, hence the fake device in task 1b).
+**App** (`frontend-nextjs/`, Next.js + Tailwind + shadcn `components/ui/`; `next` and `@supabase/*` are
+pinned to `latest` in package.json — install with `npm ci` to respect `package-lock.json`)
+- Supabase clients in `utils/supabase/` (client, server, middleware); data helpers in `db/` (conversations,
+  devices, inbound, languages, personalities, supabase types, users).
+- `app/api/generate_auth_token/route.ts` — mints the device token (see protocol step 1).
+  `app/api/ota_update_handler`, `app/api/factory_reset_handler` — device OTA / reset.
+- `app/api/session/route.ts` + `app/components/Realtime/` — the in-browser chat (WebRTC straight to OpenAI;
+  **does not go through the Deno server**, hence the fake device in task 1b). It also injects
+  `conversations` history into its prompt, and `Realtime/components/Transcript.tsx` writes transcripts via
+  `dbInsertTranscriptItem` (task 5 removes both).
 - `.env.example`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `JWT_SECRET_KEY`,
-  `ENCRYPTION_KEY`, `OPENAI_API_KEY`, `NEXT_PUBLIC_SKIP_DEVICE_REGISTRATION`; Stripe and Google OAuth vars
-  are not needed (set `GOOGLE_OAUTH=False`, leave Stripe blank).
-- Display app (task 7) goes in new `app/display/`, `components/display/`, `design/`, `public/design/`.
+  `ENCRYPTION_KEY`, `OPENAI_API_KEY`, `NEXT_PUBLIC_SKIP_DEVICE_REGISTRATION` (True for dev);
+  `GOOGLE_OAUTH` defaults to True in the example — set `False`; leave Stripe blank.
+- Display app (task 7) goes in new `app/display/`, `components/display/`, `frontend-nextjs/design/`,
+  `public/design/`.
+
+**Design inputs** (repo root `design/`, not `frontend-nextjs/design/`): `app-sketch.jpg`,
+`pouch-outline.svg`. Claude Code permissions live in `.claude/settings.json`.
 
 **Ignore:** `server/cloudflare/`, `server/fastapi/`, landing-page/pricing/order components.
 
@@ -377,12 +462,31 @@ For `LID_TEST_BOOT_BUTTON`, GPIO 0 is also an RTC IO, so ext0 wake works on it t
 Append one line per finished task or session (date, task, result, anything unverified or deferred), so a
 fresh session after `/clear` knows exactly where things stand.
 
+- 2026-10-16 — Task 0 done. Repo map verified and corrected (added device↔server protocol; found the 16→24 kHz
+  input-rate bug in `openai.ts`, now a task-1b item; browser-chat transcript removal added to task 5).
+  Setup checked: Supabase CLI logged in + linked to `smart_pouch`, hosted DB reachable, 0/6 migrations applied;
+  `server/deno/.env` and `frontend-nextjs/.env.local` exist and are gitignored (not read); `products.md` has 4
+  products; deno/node/npm/pio installed; `frontend-nextjs/node_modules` not installed yet. Renamed
+  `design/app-sketch.JPG` → `.jpg`; Claude Code permissions moved to `.claude/settings.json` (by owner).
+  Unverified before task 1: that the hosted project accepts HS256 tokens signed with `JWT_SECRET_KEY`
+  (Dashboard → Project Settings → JWT Keys). Not committed.
+- 2026-10-16 — Brief fixes: hardware day is Saturday; edge server writes summaries, not transcripts; 5b web
+  fallback rewritten; `product_catalog.source` has one value list; task 7 runs today as session B, 7d uses
+  `session_summaries` + `usage_events`; task 3 adds the RTC pull-up before deep sleep; profile decision logged;
+  `.claude/settings.json` also denies reading `.env.local`. Not committed.
+
 ## Decisions log
 
 - OpenAI Realtime chosen over chained STT→LLM→TTS for latency and because it's Elato's most-tested path.
   Claude has no realtime speech API; Claude may be used for post-session extraction.
 - Hosted Supabase instead of local Docker (speed on macOS).
 - Breadboard is optional; final wiring is F-F jumpers + Wago connectors.
+- Seed (task 1): apply `supabase/seed.sql` as-is to the hosted DB; the owner changes the `admin@elatoai.com`
+  password immediately afterwards.
+- Known limits accepted, not tasks: no barge-in (half-duplex), and the 5-minute cap is server-side only
+  (see "Known limits" in the Repo map).
+- Profiles (task 5): a profile is a `profile_id` text value, `'owner'` or `'demo'`, chosen by a new
+  `profile_id` column on `devices` (default `'demo'`). No extra user accounts.
 
 ## Appendix: The Beauty API reference (provided by The Beauty API for coding agents)
 

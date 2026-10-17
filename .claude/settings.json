@@ -10,7 +10,8 @@
       "Bash(gh pr *)",
       "Bash(gh repo *)",
       "Read(./.env)",
-      "Read(./**/.env)"
+      "Read(./**/.env)",
+      "Read(./**/.env.local)"
     ],
     "ask": [
       "Bash(git commit *)",
