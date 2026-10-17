@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" fill="none" stroke="#1F3FA8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <title>Kit outline</title>
+  <rect width="400" height="300" fill="#EFD3D2" stroke="none"/>
+  <!-- clasp: two balls on stems -->
+  <circle cx="186" cy="40" r="11"/>
+  <circle cx="214" cy="40" r="11"/>
+  <path d="M190 51 L193 66 M210 51 L207 66"/>
+  <path d="M180 66 H220"/>
+  <!-- frame: top bar with rounded shoulders running down the sides -->
+  <path d="M60 128 V86 Q60 66 80 66 H320 Q340 66 340 86 V128"/>
+  <path d="M68 128 V90 Q68 76 82 76 H318 Q332 76 332 90 V128"/>
+  <!-- strap rings on the frame ends -->
+  <circle cx="345" cy="104" r="4.5"/>
+  <circle cx="55" cy="104" r="4.5"/>
+  <!-- body: flares out under the frame, then tucks into a flat base -->
+  <path d="M64 128 C52 146 46 168 47 196 C48 226 52 246 70 254 C74 256 78 256 82 256 H318 C322 256 326 256 330 254 C348 246 352 226 353 196 C354 168 348 146 336 128"/>
+  <!-- soft fold lines -->
+  <path d="M86 250 C82 224 82 196 88 166" stroke-width="1.2" opacity="0.5"/>
+  <path d="M314 250 C318 224 318 196 312 166" stroke-width="1.2" opacity="0.5"/>
+</svg>
