@@ -152,8 +152,9 @@ export async function GET(request: NextRequest) {
   });
 
   try {
+    // GA Realtime API: mint an ephemeral client secret (the beta /realtime/sessions endpoint is gone).
     const response = await fetch(
-      "https://api.openai.com/v1/realtime/sessions",
+      "https://api.openai.com/v1/realtime/client_secrets",
       {
         method: "POST",
         headers: {
@@ -161,15 +162,23 @@ export async function GET(request: NextRequest) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gpt-realtime-2.1",
-          instructions: systemPrompt,
-          voice: dbUser.personality?.oai_voice ?? "ballad",
+          session: {
+            type: "realtime",
+            model: "gpt-realtime-2.1",
+            instructions: systemPrompt,
+            audio: {
+              output: { voice: dbUser.personality?.oai_voice ?? "ballad" },
+            },
+          },
         }),
       },
     );
-    console.log(response);
     const data = await response.json();
-    return NextResponse.json(data);
+    if (!response.ok) {
+      console.error("OpenAI client_secrets error:", response.status, data);
+    }
+    // Pass OpenAI's status and error through so the client can show the real message.
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error("Error in /session:", error);
     return NextResponse.json(

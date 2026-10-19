@@ -1,0 +1,21 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/cli@1": "1.0.32",
+    "npm:@evan/opus@^1.0.3": "1.0.3",
+    "npm:ws@8": "8.22.0"
+  },
+  "jsr": {
+    "@std/cli@1.0.32": {
+      "integrity": "188b3a100d6202d64e3f5bd3d799c7fa4f6d77f92cc65eb7f641c1fa0aa92a66"
+    }
+  },
+  "npm": {
+    "@evan/opus@1.0.3": {
+      "integrity": "sha512-ADfwIad83W1LuiZDNMjDMDNQRsPz8rj5xnDLExhVWTnA5wGJCLntOn12Ir5rxGBqdfo10QhnNVdd2+gXiZ6xCg=="
+    },
+    "ws@8.22.0": {
+      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="
+    }
+  }
+}

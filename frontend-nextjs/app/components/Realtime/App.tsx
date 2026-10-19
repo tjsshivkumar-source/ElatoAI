@@ -116,16 +116,19 @@ function App({ personalityIdState, isDoctor, userId }: AppProps) {
     const data = await tokenResponse.json();
     logServerEvent(data, "fetch_session_token_response");
 
-    if (!data.client_secret?.value) {
+    // GA client_secrets returns the ephemeral key as top-level `value`.
+    if (!data.value) {
       logClientEvent(data, "error.no_ephemeral_key");
       setSessionStatus("DISCONNECTED");
+      const reason =
+        data.error?.message ?? data.error ?? `HTTP ${tokenResponse.status}`;
       toast({
-        description: "Your API key is likely invalid. Please add it to your env variables.",
+        description: `Couldn't start a voice session: ${reason}`,
       });
       return null;
     }
 
-    return data.client_secret.value;
+    return data.value;
   };
 
   const connectToRealtime = async () => {
@@ -167,6 +170,9 @@ function App({ personalityIdState, isDoctor, userId }: AppProps) {
     } catch (err) {
       console.error("Error connecting to realtime:", err);
       setSessionStatus("DISCONNECTED");
+      toast({
+        description: `Couldn't connect to the voice session: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   };
 
@@ -238,14 +244,17 @@ function App({ personalityIdState, isDoctor, userId }: AppProps) {
 
     const tools = currentAgent?.tools || [];
 
+    // GA session shape: audio settings nested under audio.input (WebRTC handles the audio format).
     const sessionUpdateEvent = {
       type: "session.update",
       session: {
-        modalities: ["text", "audio"],
-        input_audio_format: "pcm16",
-        output_audio_format: "pcm16",
-        input_audio_transcription: { model: "whisper-1" },
-        turn_detection: turnDetection,
+        type: "realtime",
+        audio: {
+          input: {
+            transcription: { model: "whisper-1" },
+            turn_detection: turnDetection,
+          },
+        },
         tools,
       },
     };

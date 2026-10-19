@@ -16,14 +16,21 @@ memory layer, exhibition mode, and (later) a rebranded app. Keep Elato's LICENSE
 ## Hard deadline
 
 - Install on site Wed Oct 21 (owner flies in for one day). Everything must work before that.
-- Plan: Fri 10/16 ALL software (tasks 0–7). Two parallel Claude Code sessions: session A runs tasks 0–6 in
-  the main checkout; session B runs task 7 (display app) in its own git worktree, touching only
-  `frontend-nextjs/` display files and `frontend-nextjs/design/`. Session B treats the task-5 table
-  definitions in this file as its data contract and uses local mock data until task 5's tables exist.
-  Sat 10/17 soldering + wiring + first real audio; Sun 10/18 assembly + burn-in; Mon 10/19 buffer;
+- Re-planned 2026-10-19 (owner): **everything stays in scope before Wednesday's install, including the full display
+  app — nothing is cut, only the order changed.** Hardest and least reversible first; frontend last, because it
+  builds on everything else and goes fastest. One session (A) runs all remaining tasks in this order:
+  1. Task 2 — firmware bring-up (board on the desk).
+  2. Task 3 — lid trigger, incl. the RTC pull-up fix and the `LID_TEST_BOOT_BUTTON` test mode.
+  3. **Owner solders and wires** → first real audio through the board.
+  4. Task 6 — deploy (Deno Deploy, Vercel, firmware PROD_MODE, TLS certs). Claude tells the owner when to push.
+  5. Task 4 — check-ins, stop rules, 5-minute cap.
+  6. Task 5 — memory, summaries instead of transcripts, no chat-history injection, exhibition/demo profile, RLS,
+     Realtime, persona (owner approves).
+  7. Task 5b — product lookup (core).
+  8. Task 7 — display app 7a → 7e, wired to the real task-5 tables and built against live data, not mock data.
   Tue 10/20 pack; Wed 10/21 install.
-- Goal: by Saturday morning all software is done and tested without audio hardware, so on Saturday the only
-  work is connecting mic, amp and reed sensor to the pins below.
+- **Safety rule:** if task 5 isn't finished by Tuesday evening (10/20), the minimal privacy slice (no transcripts
+  saved, no chat history in the prompt) and the 5-minute session cap ship before the flight regardless.
 - Prefer the smallest change that works. Do not refactor Elato code that we don't need to touch.
 
 ## Rules for Claude Code in this repo
@@ -41,7 +48,8 @@ memory layer, exhibition mode, and (later) a rebranded app. Keep Elato's LICENSE
 ## Hardware (fixed — don't change pins without asking)
 
 Board: ESP32-S3-DevKitC-1 clone, module ESP32-S3-N16R8 (16MB flash, 8MB octal PSRAM). Arduino IDE board name:
-"ESP32S3 Dev Module". Flashing port on the owner's Mac shows as `/dev/cu.usbserial*` or `/dev/cu.wchusbserial*`.
+"ESP32S3 Dev Module". Flashing port on the owner's Mac: `/dev/cu.usbmodem5CE51459581` (seen 2026-10-16;
+may also show as `/dev/cu.usbserial*` / `/dev/cu.wchusbserial*` on another cable/port). Board Wi-Fi MAC: `98:C3:77:B5:1B:70`.
 
 | Part pin | ESP32 | Notes |
 | --- | --- | --- |
@@ -84,8 +92,8 @@ clear test data from the demo profile before the show.
 
 ## Work to do (in order — update the checkboxes as tasks complete)
 
-**Session A order:** 0 → 1 → 1b → 4 → 5 → 5b → 2 → 3 → 6. (Tasks 2–3 need the USB board; the server
-tasks come first so they can be tested with the fake device.) **Session B:** 7a → 7b → 7c → 7d.
+**Order (re-planned 2026-10-19, see "Hard deadline"):** done 0 → 1 → 1b; remaining 2 → 3 → [owner solders] → 6 →
+4 → 5 → 5b → 7 (7a → 7e). One session; no parallel session B, no mock data.
 **Decided:** keep Elato's deep-sleep/wake model for task 3 unless the owner says otherwise.
 
 **Owner inputs available:** all keys are in the `.env` files (`BEAUTY_API_KEY` included; `SEARCH_API_KEY`
@@ -97,32 +105,34 @@ Gallery WiFi is password-only.
       session handler, Supabase schema/migrations and env vars live. Write the map into "Repo map" below.
 
 ### 1. Run Elato as-is
-- [ ] Hosted Supabase: apply Elato's schema/migrations; create user, device, personality.
-- [ ] Deno server runs locally with `.env`; Next.js app runs locally.
-- [ ] Talk to the AI in the browser (gate: a spoken conversation works).
-- [ ] Register the device using the board's MAC address (flash Elato's MAC-print test sketch to read it).
+- [x] Hosted Supabase: apply Elato's schema/migrations; create user, device, personality.
+- [x] Deno server runs locally with `.env`; Next.js app runs locally.
+- [x] Talk to the AI in the browser (gate: a spoken conversation works).
+- [x] Register the device using the board's MAC address (flash Elato's MAC-print test sketch to read it).
 
 ### 1b. Fake device (so server work can be tested before soldering)
-- [ ] A small local script (`tools/fake-device/`) that connects to the Deno server exactly like the ESP32
+- [x] A small local script (`tools/fake-device/`) that connects to the Deno server exactly like the ESP32
       does (same auth, same WebSocket protocol — raw PCM16 16 kHz up, Opus down; see "Device↔server
       protocol" in the Repo map), streams the laptop mic, and plays replies
       through the laptop speakers. Simulate "pouch open" by starting it and "pouch closed" by Ctrl-C.
       Read the firmware source to match the protocol precisely. Note: the browser chat in Elato's app may
       bypass the Deno server, so it does NOT exercise check-ins or tools — the fake device does.
-- [ ] Fix the input sample rate in `server/deno/models/openai.ts`: the device sends 16 kHz PCM but the
+- [x] Fix the input sample rate in `server/deno/models/openai.ts`: the device sends 16 kHz PCM but the
       session declares 24 kHz (`realtime/client.js` `_toGASessionPayload`) and openai.ts forwards it
       unresampled. Reuse `resamplePcm16Mono` from `models/grok.ts` / `models/openai-live.ts` (16000 → 24000)
       before `input_audio_buffer.append`. Verify with the DEV_MODE debug files
       (`debug_audio_<ts>.pcm` in `server/deno/`, raw s16le mono): wrap one in a WAV header at 16000 Hz
       and at 24000 Hz and listen — the 16 kHz one should sound natural, proving the input rate. After the
       fix, confirm the logged user transcriptions match what was said.
-- [ ] Gate: a spoken conversation through the fake device, server logs show the session.
+- [x] Gate: a spoken conversation through the fake device, server logs show the session.
 
 ### 2. Firmware bring-up
 - [ ] `config.h`: comment out `TOUCH_MODE`; DEV_MODE with the laptop IP in `Config.cpp`.
 - [ ] Confirm the pin definitions match the table above (esp. amp Vin note is wiring-only; SD = GPIO 10).
 - [ ] Build + flash with PlatformIO; device connects to WiFi and the local server (works before soldering).
 - [ ] With hardware soldered: spoken conversation through mic and speaker.
+      Watch: the server sends `RESPONSE.COMPLETE` when generation ends, not when playback ends, and the firmware
+      flushes the speaker 1 s after it. If the end of long replies gets cut off on the board, that's why.
 
 ### 3. Lid trigger (firmware)
 - [ ] GPIO 2 LOW held ≥300ms → start session. HIGH held ≥300ms → end session immediately, amp off.
@@ -232,8 +242,8 @@ When the user names a product that isn't in their kit, the kit identifies it, co
       PCM files when `DEV_MODE` is on — make sure that's off in production, the filesystem there is read-only).
 
 ### 7. Companion display app (iPhone kiosk)
-See "Display app design spec" below and `design/app-sketch.jpg`. Build in this priority order and stop
-wherever time runs out; each step must ship working on its own.
+See "Display app design spec" below and `design/app-sketch.jpg`. All of 7a–7e is in scope before the install.
+Build in this order against the live task-5 tables (no mock data); each step must ship working on its own.
 - [ ] 7a. Theme tokens file + fonts + mirror-icon nav shell + live Supabase subscription.
 - [ ] 7b. Home ("Your Kit"): kit outline with product PNGs populating live (text label fallback).
 - [ ] 7c. Products ("cupboard"): grid of slots → product detail (PNG, name, product notes).
@@ -363,7 +373,9 @@ Paths are relative to the repo root `ElatoAI/`.
 1. Token: `GET http://<backend>:3000/api/generate_auth_token?macAddress=<MAC>` → `{token}`. HS256 JWT
    signed with `JWT_SECRET_KEY`, claims `aud/role = authenticated`, `sub = user_id`, `email`, **no expiry**.
    With `NEXT_PUBLIC_SKIP_DEVICE_REGISTRATION=True` the token is always for `admin@elatoai.com`; otherwise
-   for the user linked to that MAC in `devices`. Stored in NVS (`auth` / `auth_token`).
+   for the user linked to that MAC in `devices`. Stored in NVS (`auth` / `auth_token`). **`JWT_SECRET_KEY` must be
+   identical in `frontend-nextjs/.env.local` and `server/deno/.env`** (both = Supabase legacy JWT secret); a mismatch
+   makes the server answer 401, and a board would keep the bad token in NVS until factory reset.
 2. WebSocket `ws://<ws_server>:8000/` with headers `Authorization: Bearer <token>`, `X-Wifi-Rssi: <rssi>`,
    `X-Elato-Playback-Ack: 1`, `X-Device-Mac: <MAC>`. Server (`main.ts` upgrade handler) verifies the JWT
    with `JWT_SECRET_KEY`, loads the user by email (with `personality`, `language`, `device`), and uses the
@@ -381,7 +393,7 @@ Paths are relative to the repo root `ElatoAI/`.
    `createOpusPacketizer`); device decodes and plays at 48 kHz. Only accepted while SPEAKING.
 5. Device → server, binary: **raw PCM16 LE, 16 kHz mono, not Opus**, sent in 64-byte chunks, **only while
    LISTENING**. Server forwards it as `input_audio_buffer.append`. ⚠ The OpenAI session declares input as
-   24 kHz (`realtime/client.js` `_toGASessionPayload`) and `openai.ts` does not resample — fix in task 1b.
+   24 kHz (`realtime/client.js` `_toGASessionPayload`); `openai.ts` now resamples 16→24 kHz (fixed in task 1b).
    (`grok.ts` and `openai-live.ts` already resample 16→24 kHz.)
 6. Turn flow: after connect the device is PROCESSING and sends no audio until the greeting finishes
    (first `RESPONSE.COMPLETE` + 1 s). Turn detection is OpenAI `server_vad`. Half-duplex: the firmware
@@ -443,7 +455,10 @@ pinned to `latest` in package.json — install with `npm ci` to respect `package
 - `app/api/generate_auth_token/route.ts` — mints the device token (see protocol step 1).
   `app/api/ota_update_handler`, `app/api/factory_reset_handler` — device OTA / reset.
 - `app/api/session/route.ts` + `app/components/Realtime/` — the in-browser chat (WebRTC straight to OpenAI;
-  **does not go through the Deno server**, hence the fake device in task 1b). It also injects
+  **does not go through the Deno server**, hence the fake device in task 1b). Migrated 2026-10-17 to the **GA
+  Realtime API** (upstream used the removed beta API): token from `POST /v1/realtime/client_secrets`
+  (key in `data.value`), WebRTC via `POST /v1/realtime/calls`, GA `session.update` shape, GA event names
+  (`conversation.item.added`, `response.output_audio_transcript.delta`); errors now show OpenAI's real message. It also injects
   `conversations` history into its prompt, and `Realtime/components/Transcript.tsx` writes transcripts via
   `dbInsertTranscriptItem` (task 5 removes both).
 - `.env.example`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `JWT_SECRET_KEY`,
@@ -474,6 +489,35 @@ fresh session after `/clear` knows exactly where things stand.
   fallback rewritten; `product_catalog.source` has one value list; task 7 runs today as session B, 7d uses
   `session_summaries` + `usage_events`; task 3 adds the RTC pull-up before deep sleep; profile decision logged;
   `.claude/settings.json` also denies reading `.env.local`. Not committed.
+- 2026-10-16 — Task 1 (partial). Owner applied all 6 migrations (`db push`; pgjwt applied fine on PG17) and
+  `seed.sql` via Dashboard SQL Editor (CLI seed failed: `gen_salt` not on its search_path); admin password changed.
+  Verified: `migration list` 6/6; hosted project accepts HS256 tokens signed with `JWT_SECRET_KEY` (wrong-secret
+  token → 401); `npm ci` + `npm run dev` (only a React key warning) and Deno server on :8000 run; device-style
+  smoke test (token from `/api/generate_auth_token` → WS with firmware headers) got `auth`, greeting audio
+  (138 Opus packets) and `RESPONSE.COMPLETE`. Board MAC read with the MAC-print sketch (flashed from a temp
+  project; board now runs that sketch, not Elato). Pending: owner's browser conversation gate; owner runs the
+  device-registration SQL. Not committed.
+- 2026-10-17 — Task 1 browser gate passed (owner talked to Aria in the browser, she answered aloud). Fix needed:
+  upstream browser chat called OpenAI's removed beta Realtime API (`/v1/realtime/sessions` → 404, shown as a
+  misleading "API key is likely invalid" toast). Moved `session/route.ts`, `realtimeConnection.ts`, `App.tsx`,
+  `useHandleServerEvent.ts` to the GA API; toast shows the real error. `tsc --noEmit` clean. Deno/device path
+  untouched; transcript saving/history injection left for task 5. Still pending: owner runs the device-registration
+  SQL (board `98:C3:77:B5:1B:70` not in `devices` as of 2026-10-17). Not committed.
+- 2026-10-17 — Task 1 done. Owner registered the board: `devices` row `98:C3:77:B5:1B:70` / user_code `pouch-01`
+  linked to admin (`devices.user_id` and `users.device_id` both set; verified via REST). Not committed.
+- 2026-10-18 — Task 1b done. `tools/fake-device/` (Deno + sox `rec`/`play`, `deno task start`; README lists the
+  deliberate differences from the board). `openai.ts` resamples device input 16→24 kHz (copy of grok.ts's
+  `resamplePcm16Mono`; debug file still raw 16 kHz). Verified: before-fix debug PCM sounds natural as 16 kHz (owner
+  listened); after the fix, owner held a spoken conversation through the fake device and the server transcribed
+  "quick brown fox jumps over the lazy dog. Today I've used my parents double serum" ("Clarins" → "parents": a
+  brand-name garble for 5b's normalization tests). Issues found and fixed: (1) `JWT_SECRET_KEY` in `.env.local` had
+  drifted from `server/deno/.env` → 401 (owner fixed); (2) AirPods switch to headset mode when the mic opens, so
+  sox playback ran at half speed — fake device now opens the mic first. `deno check main.ts` shows 33 errors,
+  same as the committed baseline (missing global types; the server runs untyped via `deno run`). Active
+  personality is currently Kai Indiebrew (`hipster_barista_sarcastic`), set by the owner in the app. Not committed.
+- 2026-10-19 — Plan re-ordered by owner (see "Hard deadline"): 2 → 3 → [solder] → 6 → 4 → 5 → 5b → 7, single
+  session, display app built last against live data; nothing cut. Safety rule added: privacy slice + 5-min cap ship
+  by Tue evening even if task 5 is unfinished. Starting task 2 with a plan.
 
 ## Decisions log
 
@@ -487,6 +531,8 @@ fresh session after `/clear` knows exactly where things stand.
   (see "Known limits" in the Repo map).
 - Profiles (task 5): a profile is a `profile_id` text value, `'owner'` or `'demo'`, chosen by a new
   `profile_id` column on `devices` (default `'demo'`). No extra user accounts.
+- Re-plan (2026-10-19): hardest/least-reversible first, frontend last; full scope kept including the display app;
+  display app built in session A against live tables (replaces the parallel session B + mock-data plan).
 
 ## Appendix: The Beauty API reference (provided by The Beauty API for coding agents)
 

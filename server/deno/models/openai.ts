@@ -5,6 +5,32 @@ import { RealtimeUtils } from "../realtime/utils.js";
 import { addConversation, getDeviceInfo } from "../supabase.ts";
 import { createOpusPacketizer, isDev, openaiApiKey, defaultOpenAIVoice } from "../utils.ts";
 
+// The ESP32 sends 16 kHz PCM16 but the Realtime session declares 24 kHz input
+// (realtime/client.js _toGASessionPayload), so upsample before appending.
+const ESP32_INPUT_RATE = 16000;
+const OPENAI_INPUT_RATE = 24000;
+
+// Same linear resampler as models/grok.ts and models/openai-live.ts.
+function resamplePcm16Mono(input: Buffer, fromRate: number, toRate: number): Buffer {
+    if (fromRate === toRate || input.length === 0) return input;
+
+    const inputSamples = Math.floor(input.length / 2);
+    const outputSamples = Math.max(1, Math.floor((inputSamples * toRate) / fromRate));
+    const output = Buffer.alloc(outputSamples * 2);
+
+    for (let i = 0; i < outputSamples; i++) {
+        const sourcePosition = (i * fromRate) / toRate;
+        const leftIndex = Math.floor(sourcePosition);
+        const rightIndex = Math.min(leftIndex + 1, inputSamples - 1);
+        const fraction = sourcePosition - leftIndex;
+        const left = input.readInt16LE(leftIndex * 2);
+        const right = input.readInt16LE(rightIndex * 2);
+        output.writeInt16LE(Math.round(left + (right - left) * fraction), i * 2);
+    }
+
+    return output;
+}
+
 const sendFirstMessage = (client: RealtimeClient, firstMessage: string) => {
     const event = {
         event_id: RealtimeUtils.generateId("evt_"), // Generate unique ID
@@ -209,7 +235,11 @@ export const connectToOpenAI = async ({
 
             // for esp32
             if (isBinary) {
-                const base64Data = data.toString("base64");
+                const base64Data = resamplePcm16Mono(
+                    Buffer.from(data),
+                    ESP32_INPUT_RATE,
+                    OPENAI_INPUT_RATE,
+                ).toString("base64");
 
                 // Convert binary PCM16 data to base64 for OpenAI Realtime API
                 event = {

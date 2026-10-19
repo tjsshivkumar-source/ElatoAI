@@ -118,7 +118,8 @@ export function useHandleServerEvent({
         break;
       }
 
-      case "conversation.item.created": {
+      case "conversation.item.created":
+      case "conversation.item.added": { // GA name
         let text =
           serverEvent.item?.content?.[0]?.text ||
           serverEvent.item?.content?.[0]?.transcript ||
@@ -151,7 +152,7 @@ export function useHandleServerEvent({
         break;
       }
 
-      case "response.audio_transcript.delta": {
+      case "response.output_audio_transcript.delta": { // GA name (beta: response.audio_transcript.delta)
         const itemId = serverEvent.item_id;
         const deltaText = serverEvent.delta || "";
         if (itemId) {

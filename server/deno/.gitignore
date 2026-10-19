@@ -2,3 +2,5 @@ node_modules
 .env
 .env.local
 debug_audio_*
+*.pcm
+*.wav

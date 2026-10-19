@@ -1,0 +1,6 @@
+{
+  "nodeModulesDir": "none",
+  "tasks": {
+    "start": "deno run --allow-net --allow-run=rec,play --allow-env --allow-ffi fake_device.ts"
+  }
+}

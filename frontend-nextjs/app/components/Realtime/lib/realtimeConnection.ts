@@ -20,10 +20,8 @@ export async function createRealtimeConnection(
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  const baseUrl = "https://api.openai.com/v1/realtime";
-  const model = "gpt-realtime-2.1";
-
-  const sdpResponse = await fetch(`${baseUrl}?model=${model}`, {
+  // GA Realtime API WebRTC endpoint; the model comes from the ephemeral key's session.
+  const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
     body: offer.sdp,
     headers: {
@@ -33,6 +31,13 @@ export async function createRealtimeConnection(
   });
 
   const answerSdp = await sdpResponse.text();
+  if (!sdpResponse.ok) {
+    let message = answerSdp;
+    try {
+      message = JSON.parse(answerSdp).error?.message ?? answerSdp;
+    } catch {}
+    throw new Error(`OpenAI WebRTC connect failed (${sdpResponse.status}): ${message}`);
+  }
   const answer: RTCSessionDescriptionInit = {
     type: "answer",
     sdp: answerSdp,
